@@ -1,4 +1,4 @@
-import raylib, rayutils, sequtils, lenientops, sugar, random
+import raylib, rayutils, sequtils, lenientops, sugar, random, algorithm
 
 const
     screenWidth = 1920
@@ -8,6 +8,8 @@ const
 
 InitWindow screenWidth, screenHeight, "Frontlines"
 SetTargetFPS 60
+
+randomize()
 
 var
    gridX = 12
@@ -32,7 +34,6 @@ func gFlatten(v : Vector2, gridX : int) : int =
     v.x.int + v.y.int * gridX
 
 func drawGridlines[T](grid : seq[T], posX, posY : int, cs: Vector2, gridX, gridY, held: int, col : Color) =
-    DrawRectangleLines(posX - 1, posY - 1, cs.x.int * gridX + 2, cs.y.int * gridY + 2, WHITE)
     for i in 0..<gridX:
         for j in 0..<gridY:
             if gFlatten(makevec2(i, j), gridX) == held: 
@@ -47,7 +48,6 @@ func drawCells(grid : seq[(Color, int, int)], posX, posY : int, cs : Vector2, gr
             let pos = makevec2((i mod gridX) * cs.x + posX, (i div gridX) * cs.y + posY)
             DrawRectangleV(pos, cs, grid[i][0])
             drawTextCentered($grid[i][1], pos.x.int + cs.x.int div 2, pos.y.int + cs.y.int div 2, int(int(cs.x + cs.y) / 5.15), AGREY)
-            drawTextCentered($grid[i][2], pos.x.int + cs.x.int div 8, pos.y.int + cs.y.int - cs.y.int div 8, int(int(cs.x + cs.y) / 10), AGREY)
 
 func screenToArr(v : Vector2, marginX, marginY, gridX, gridY : int, cs : Vector2) : int =
     let v = v - makevec2(marginX, marginY)
@@ -61,22 +61,30 @@ func getNeighbors(grid : seq[(Color, int, int)], gridX, inx : int, turnCols : ar
         result.add grid[inx - 1]
     if inx < grid.len - 1 and (inx + 1) div gridX == inx div gridX and grid[inx + 1][0] in turnCols:
         result.add grid[inx + 1]
-    if inx + gridX < grid.len - 1 and grid[inx + gridX][0] in turnCols:
+    if inx + gridX <= grid.len - 1 and grid[inx + gridX][0] in turnCols:
         result.add grid[inx + gridX]
-    if inx - gridX > 0 and grid[inx - gridX][0] in turnCols:
+    if inx - gridX >= 0 and grid[inx - gridX][0] in turnCols:
         result.add grid[inx - gridX]
+
+func rawGetNeighborsIndices(grid : seq[(Color, int, int)], gridX, inx : int, turnCols : array[4, Color]) : seq[int] =
+    if inx > 0 and (inx - 1) div gridX == inx div gridX:
+        result.add inx - 1
+    if inx < grid.len - 1 and (inx + 1) div gridX == inx div gridX:
+        result.add inx + 1
+    if inx + gridX <= grid.len - 1:
+        result.add inx + gridX
+    if inx - gridX >= 0:
+        result.add inx - gridX   
 
 func getNeighborsIndices(grid : seq[(Color, int, int)], gridX, inx : int, turnCols : array[4, Color]) : seq[int] =
     if inx > 0 and (inx - 1) div gridX == inx div gridX and grid[inx - 1][0] in turnCols:
         result.add inx - 1
     if inx < grid.len - 1 and (inx + 1) div gridX == inx div gridX and grid[inx + 1][0] in turnCols:
         result.add inx + 1
-    if inx + gridX < grid.len - 1 and grid[inx + gridX][0] in turnCols:
+    if inx + gridX <= grid.len - 1 and grid[inx + gridX][0] in turnCols:
         result.add inx + gridX
-    if inx - gridX > 0 and grid[inx - gridX][0] in turnCols:
+    if inx - gridX >= 0 and grid[inx - gridX][0] in turnCols:
         result.add inx - gridX
-
-## --- Game AI --- ##
 
 func getPossibleMoves[T](grid : seq[T], gridX : int, col : Color, turnCols : array[4, Color]) : seq[(int, int)] =
     let ctrled = toSeq findAll(grid, x => x[0] == col)
@@ -111,16 +119,27 @@ func incTurn(turn : int, nTroops : openArray[int]) : int =
     result = turn + 1; result = result mod 4
     while nTroops[result] == 0: result += 1; result = result mod 4
 
-proc randomizeGrid[T](grid : seq[T], gridX, gridY : int, turnCols : array[4, Color]) : seq[T] =
-    result = newSeqWith(gridX * gridY, (CLEAR, 0, 0))
-    for i in 0..<grid.len:
-        if rand(15) div 14 == 1:
-            result[i] = (OFFWHITE, 0, 0)
-            continue
-        var colID = rand(3)
-        while toSeq(result.findAll(x => x[0] == turnCols[colID])).len > (gridX * gridY div 4):
-            colID = rand(3)
-        result[i] = (turnCols[colID], rand(1) + 3, rand(3) + 1)
+proc randomizeGrid(grid : seq[(Color, int, int)], gridX, gridY : int, turnCols : array[4, Color]) : seq[(Color, int, int)] =
+    result = newSeqWith(gridX * gridY, (AGREY, 0, 0))
+    let nTiles = gridX * gridY - gridX * 2 + rand(gridX)
+    let center = (gridY div 2) * gridX + gridX div 2
+    echo center
+    var filledCells = @[center]
+    for i in 0..<nTiles:
+        var currentCell = center
+        while currentCell in filledCells:
+            let nbors = rawGetNeighborsIndices(grid, gridX, currentCell, turnCols)
+            echo nbors
+            currentCell = nbors[rand(nbors.len - 1)]
+        echo currentCell
+        filledCells.add currentCell
+        let nColsCount = [result.filterIt(it[0] == turnCols[0]).mapIt(it[1]), result.filterIt(it[0] == turnCols[1]).mapIt(it[1]), result.filterIt(it[0] == turnCols[2]).mapIt(it[1]), result.filterIt(it[0] == turnCols[3]).mapIt(it[1])]
+        var nCols = newSeqWith(4, 0)
+        for i in 0..<4:
+            if nColsCount[i] != @[]: nCols[i] = nColsCount[i].foldl(a + b)
+        let col = nCols.find(nCols.sorted(Ascending)[0])
+        result[currentCell] = (turnCols[col], rand(3) + 1, 0)
+
 
 func getTcFrac(turn : int, nTroops : array[4, int]) : float =
     let nAlive = toSeq(nTroops.findAll(x => x > 0)).len
@@ -194,7 +213,7 @@ while not WindowShouldClose():
         grid[held] = (turnCols[turn], 1, grid[held][2])
         held = -1
         dest = -1
-    elif held == -1 and dest == -1 and (IsKeyPressed(KEY_SPACE) or turn != 3):
+    elif held == -1 and dest == -1 and (IsKeyPressed(KEY_SPACE) or turn != 0):
         phase = 0
         mvcount = 0
         turn = incTurn(turn, numTroops)
@@ -206,7 +225,7 @@ while not WindowShouldClose():
 
     ## AI Agent ##
 
-    if turn != 3:
+    if turn != 0:
         let mvfactor = max(0.001, heldCells[turn] * -0.005 + 6.5)
         if rand(100) < mvcount * mvfactor:
             held = -1; dest = -1
